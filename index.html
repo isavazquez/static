@@ -7,45 +7,25 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="container">
-    <h1>Upcoming Events</h1>
-    <div id="calendar"></div>
+  <div class="calendar-layout">
+    <section class="today-view">
+      <h2>Today</h2>
+      <div class="day-grid" id="day-grid"></div>
+    </section>
+    <section class="upcoming-view">
+      <h2>Upcoming</h2>
+      <div class="upcoming-list" id="upcoming-list"></div>
+    </section>
   </div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ical.js/1.4.0/ical.min.js"></script>
   <script>
-    // Your .ics feed
     const ICAL_URL = "https://calendar.google.com/calendar/ical/41998b114ef94187c96a893f41e270b86f68910ab6d3e46366149635e3d2a957%40group.calendar.google.com/private-0aafd61ab8b86e0df5fb5c1349eede52/basic.ics";
-    // Free public CORS proxy (for demo & personal use)
     const PROXY = "https://api.allorigins.win/raw?url=";
 
     async function fetchICal(url) {
       const response = await fetch(PROXY + encodeURIComponent(url));
       if (!response.ok) throw new Error("Error fetching calendar");
       return response.text();
-    }
-
-    function formatDate(dt) {
-      return dt.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
-    }
-
-    function formatTime(dt) {
-      return dt.toLocaleTimeString(undefined, {hour: '2-digit', minute:'2-digit'});
-    }
-
-    function renderEvents(events) {
-      const calendar = document.getElementById('calendar');
-      if (!events.length) {
-        calendar.innerHTML = "<p>No upcoming events.</p>";
-        return;
-      }
-      events.sort((a, b) => a.start - b.start);
-      calendar.innerHTML = events.map(ev => `
-        <div class="event">
-          <div class="event-date">${formatDate(ev.start)} ${ev.start.toTimeString() !== "00:00:00 GMT" ? formatTime(ev.start) : ""}</div>
-          <div class="event-summary">${ev.summary || '(No Title)'}</div>
-          ${ev.location ? `<div class="event-location">${ev.location}</div>` : ''}
-        </div>
-      `).join('');
     }
 
     function parseICal(data) {
@@ -58,16 +38,118 @@
           summary: event.summary,
           start: event.startDate ? event.startDate.toJSDate() : null,
           end: event.endDate ? event.endDate.toJSDate() : null,
+          allDay: event.startDate && event.startDate.isDate,
           location: event.location || null,
         };
-      }).filter(ev => ev.start && ev.start >= new Date(new Date().setHours(0,0,0,0)));
+      }).filter(ev => ev.start);
+    }
+
+    // Returns events occurring today (all-day or start/end within today)
+    function getTodayEvents(events) {
+      const now = new Date();
+      return events.filter(ev => isSameDay(ev.start, now));
+    }
+
+    // Returns events that start after today (not today), sorted, max N
+    function getUpcomingEvents(events, max=10) {
+      const now = new Date();
+      const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0);
+      return events
+        .filter(ev => ev.start >= tomorrow)
+        .sort((a, b) => a.start - b.start)
+        .slice(0, max);
+    }
+
+    function isSameDay(d1, d2) {
+      return d1.getFullYear() === d2.getFullYear() &&
+             d1.getMonth() === d2.getMonth() &&
+             d1.getDate() === d2.getDate();
+    }
+
+    function pad(n) { return n.toString().padStart(2, "0"); }
+
+    function formatTime(dt) {
+      return `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    }
+
+    // Only show 8am–8pm in day view, all-day events at top
+    function renderDayView(events) {
+      const grid = document.getElementById('day-grid');
+      grid.innerHTML = '';
+      // All-day events at top
+      const allDayEvents = events.filter(e => e.allDay);
+      if (allDayEvents.length > 0) {
+        allDayEvents.forEach(ev => {
+          const block = document.createElement('div');
+          block.className = 'event-block allday';
+          block.innerHTML = `<span class="event-time">All day</span> <span class="event-title">${ev.summary || '(No Title)'}</span>`;
+          if (ev.location) block.innerHTML += `<span class="event-location">${ev.location}</span>`;
+          grid.appendChild(block);
+        });
+      }
+      // Hour grid: 8am (8) to 8pm (19)
+      for (let hour = 8; hour <= 19; hour++) {
+        const slot = document.createElement('div');
+        slot.className = 'hour-slot';
+        slot.innerHTML = `<div class="hour-label">${pad(hour)}:00</div>`;
+        // Events that intersect this hour (and intersect the 8-20 range)
+        events.filter(ev => !ev.allDay).forEach(ev => {
+          const startHour = ev.start.getHours() + ev.start.getMinutes() / 60;
+          const endHour = ev.end ? (ev.end.getHours() + ev.end.getMinutes() / 60) : (startHour + 1);
+          // Only render event blocks that overlap this hour slot and within 8-20
+          if (
+            Math.max(startHour, 8) < Math.min(endHour, 20) &&
+            hour >= Math.floor(Math.max(startHour, 8)) && hour < Math.ceil(Math.min(endHour, 20))
+          ) {
+            const evBlock = document.createElement('div');
+            evBlock.className = 'event-block';
+            // Calculate top and height within the slot
+            const effectiveStart = Math.max(startHour, hour);
+            const effectiveEnd = Math.min(endHour, hour + 1, 20);
+            const top = (effectiveStart - hour) * 60;
+            const height = Math.max(20, (effectiveEnd - effectiveStart) * 60);
+            evBlock.style.top = `${top}px`;
+            evBlock.style.height = `${height}px`;
+            evBlock.innerHTML = `
+              <span class="event-title">${ev.summary || '(No Title)'}</span>
+              <span class="event-time">${formatTime(ev.start)}—${ev.end ? formatTime(ev.end) : ''}</span>
+              ${ev.location ? `<span class="event-location">${ev.location}</span>` : ''}
+            `;
+            slot.appendChild(evBlock);
+          }
+        });
+        grid.appendChild(slot);
+      }
+    }
+
+    function renderUpcoming(events) {
+      const container = document.getElementById('upcoming-list');
+      if (!events.length) {
+        container.innerHTML = "<p>No upcoming events.</p>";
+        return;
+      }
+      container.innerHTML = events.map(ev => `
+        <div class="upcoming-event">
+          <span class="event-title">${ev.summary || '(No Title)'}</span>
+          <span class="event-datetime">
+            ${ev.allDay ? 'All day' : formatTime(ev.start)}${ev.end ? '—' + formatTime(ev.end) : ''}
+            (${ev.start.toLocaleDateString()})
+          </span>
+          ${ev.location ? `<span class="event-location">${ev.location}</span>` : ''}
+        </div>
+      `).join('');
     }
 
     fetchICal(ICAL_URL)
       .then(parseICal)
-      .then(renderEvents)
+      .then(events => {
+        const todayEvents = getTodayEvents(events);
+        renderDayView(todayEvents);
+        renderUpcoming(getUpcomingEvents(events, 10));
+      })
       .catch(err => {
-        document.getElementById('calendar').innerHTML = "<p>Error loading calendar.</p>";
+        document.getElementById('day-grid').innerHTML = "<p>Error loading calendar.</p>";
+        document.getElementById('upcoming-list').innerHTML = "";
         console.error(err);
       });
   </script>
