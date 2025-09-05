@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Calendar Splashpage</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Upcoming Events</h1>
+    <div id="calendar"></div>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ical.js/1.4.0/ical.min.js"></script>
+  <script>
+    // Your .ics feed
+    const ICAL_URL = "https://calendar.google.com/calendar/ical/41998b114ef94187c96a893f41e270b86f68910ab6d3e46366149635e3d2a957%40group.calendar.google.com/private-0aafd61ab8b86e0df5fb5c1349eede52/basic.ics";
+    // Free public CORS proxy (for demo & personal use)
+    const PROXY = "https://api.allorigins.win/raw?url=";
+
+    async function fetchICal(url) {
+      const response = await fetch(PROXY + encodeURIComponent(url));
+      if (!response.ok) throw new Error("Error fetching calendar");
+      return response.text();
+    }
+
+    function formatDate(dt) {
+      return dt.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+    }
+
+    function formatTime(dt) {
+      return dt.toLocaleTimeString(undefined, {hour: '2-digit', minute:'2-digit'});
+    }
+
+    function renderEvents(events) {
+      const calendar = document.getElementById('calendar');
+      if (!events.length) {
+        calendar.innerHTML = "<p>No upcoming events.</p>";
+        return;
+      }
+      events.sort((a, b) => a.start - b.start);
+      calendar.innerHTML = events.map(ev => `
+        <div class="event">
+          <div class="event-date">${formatDate(ev.start)} ${ev.start.toTimeString() !== "00:00:00 GMT" ? formatTime(ev.start) : ""}</div>
+          <div class="event-summary">${ev.summary || '(No Title)'}</div>
+          ${ev.location ? `<div class="event-location">${ev.location}</div>` : ''}
+        </div>
+      `).join('');
+    }
+
+    function parseICal(data) {
+      const jcalData = ICAL.parse(data);
+      const comp = new ICAL.Component(jcalData);
+      const vevents = comp.getAllSubcomponents('vevent');
+      return vevents.map(ve => {
+        const event = new ICAL.Event(ve);
+        return {
+          summary: event.summary,
+          start: event.startDate ? event.startDate.toJSDate() : null,
+          end: event.endDate ? event.endDate.toJSDate() : null,
+          location: event.location || null,
+        };
+      }).filter(ev => ev.start && ev.start >= new Date(new Date().setHours(0,0,0,0)));
+    }
+
+    fetchICal(ICAL_URL)
+      .then(parseICal)
+      .then(renderEvents)
+      .catch(err => {
+        document.getElementById('calendar').innerHTML = "<p>Error loading calendar.</p>";
+        console.error(err);
+      });
+  </script>
+</body>
+</html>
